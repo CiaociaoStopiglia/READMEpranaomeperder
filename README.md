@@ -88,6 +88,65 @@ Prisma + PostgreSQL Supabase (salva URL no banco)
 
 ---
 
+## 💻 Rodando o Projeto em um PC Novo (Ex: PC da Escola)
+
+> Siga esses passos toda vez que clonar o repositório em uma máquina nova.
+
+### 1. Clonar o repositório
+
+```bash
+git clone https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git
+cd SEU_REPOSITORIO
+```
+
+### 2. Instalar as dependências
+
+```bash
+npm i
+```
+
+### 3. Criar o arquivo `.env`
+
+O `.env` **nunca é enviado ao GitHub** (está no `.gitignore`), então você precisa criá-lo manualmente. Crie o arquivo `.env` na raiz do projeto com o seguinte conteúdo:
+
+```env
+PORT=3000
+API_KEY="exemplo-backend-2026"
+
+# Supabase — conexão via pooler (aplicação)
+DATABASE_URL="postgresql://postgres.SEUPROJETO:SUASENHA@aws-1-sa-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
+
+# Supabase — conexão direta (migrations)
+DIRECT_URL="postgresql://postgres.SEUPROJETO:SUASENHA@aws-1-sa-east-1.pooler.supabase.com:5432/postgres"
+
+# Supabase Storage
+SUPABASE_URL="https://SEUPROJETO.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY="eyJ..."
+```
+
+> ⚠️ Substitua os valores pelas suas credenciais reais do Supabase. As URLs você pega em **Connect → ORM → Prisma** e a Service Role Key em **Project Settings → API Keys**.
+
+### 4. Gerar o Prisma Client
+
+```bash
+npx prisma generate
+```
+
+### 5. Rodar o servidor
+
+```bash
+npm run dev
+```
+
+Deve aparecer:
+```
+🚀 Servidor rodando em http://localhost:3000
+```
+
+> ✅ Pronto! O banco já está no Supabase, então não precisa rodar migrations novamente.
+
+---
+
 ## Etapa 1 — Desenvolvimento Local
 
 ### 1.1 Configurar `.env` local
@@ -144,13 +203,6 @@ Content-Type: application/json
 GET http://localhost:3000/api/exemplos
 ```
 
-Teste também os filtros disponíveis via query string:
-```
-GET http://localhost:3000/api/exemplos?nome=alpha
-GET http://localhost:3000/api/exemplos?estado=true
-GET http://localhost:3000/api/exemplos?preco=3500
-```
-
 **Buscar por ID:**
 ```
 GET http://localhost:3000/api/exemplos/1
@@ -202,6 +254,7 @@ DELETE http://localhost:3000/api/exemplos/1
 ```env
 # Servidor
 PORT=3000
+API_KEY="exemplo-backend-2026"
 
 # Banco de dados local (comentado)
 # DATABASE_URL="postgresql://postgres:senha@localhost:7777/exemplo_db"
@@ -215,17 +268,27 @@ DIRECT_URL="postgresql://..."
 
 5. Substitua `[YOUR-PASSWORD]` pela senha anotada na etapa 2.1
 
+> ⚠️ Os colchetes `[YOUR-PASSWORD]` fazem parte do placeholder — apague-os junto com o texto e coloque só a senha. Exemplo: se sua senha é `minhasenha123`, fica `...pooler.supabase.com:5432/postgres` com `:minhasenha123@` no meio.
+
 ### 2.3 Ajustar o `prisma.config.js`
 
-O Supabase usa PgBouncer (pooling) por padrão. O Prisma precisa de conexão direta para migrations, por isso usa `DIRECT_URL`:
-
-Ajuste o `prisma.config.js`:
+O Supabase usa PgBouncer (pooling) por padrão. O Prisma precisa de conexão direta para migrations, por isso usa `DIRECT_URL`. O arquivo deve ficar assim:
 
 ```js
-datasource: {
-    url: process.env['DIRECT_URL'],
-},
+import 'dotenv/config';
+import { defineConfig } from 'prisma/config';
+
+export default defineConfig({
+    schema: 'prisma/schema.prisma',
+    migrate: {
+        datasource: {
+            url: process.env['DIRECT_URL'],
+        },
+    },
+});
 ```
+
+> ⚠️ A `datasource` com `url` precisa estar **dentro de `migrate`** — se estiver no nível raiz, o Prisma não encontra a URL e retorna erro.
 
 ### 2.4 Rodar a migration
 
@@ -233,6 +296,12 @@ datasource: {
 npx prisma migrate dev --name init
 npx prisma generate
 ```
+
+> ⚠️ Se aparecer o erro `Drift detected` ou `migration history out of sync`, rode:
+> ```bash
+> npx prisma migrate reset
+> ```
+> Confirme com `y`. Isso apaga e recria tudo — use só em desenvolvimento.
 
 ### 2.5 Rodar o Seed
 
@@ -244,7 +313,11 @@ npx prisma db seed
 
 ### 2.6 Testar rotas no Postman
 
-A API ainda roda local — apenas o banco agora é o Supabase. Use `http://localhost:3000` normalmente.
+A API ainda roda local — apenas o banco agora é o Supabase. Em **todas** as requisições, adicione o header:
+
+| Key | Value |
+|-----|-------|
+| `X-API-Key` | `exemplo-backend-2026` |
 
 **Criar exemplo:**
 ```
@@ -323,6 +396,8 @@ app.use('/api/exemplos', apiKey, exemplosRoutes);
 
 **Com API Key — deve funcionar normalmente**
 
+> No Postman, vá em **Headers** e adicione `X-API-Key: exemplo-backend-2026` em todas as requisições.
+
 ### 3.5 Criar `src/lib/middlewares/fileGate.js`
 
 ```js
@@ -374,9 +449,24 @@ export const upload = multer({
    - **Restrict MIME types:** ❌ desativado
 3. Clique em **Save**
 
-> ⚠️ O bucket vai ser configurado para ser público, pois toda segurança e regra de negocios será gerenciada no backend.
+> ⚠️ O bucket é público pois toda a segurança é gerenciada no backend via API Key.
 
-### 4.2 Criar `src/lib/services/supabase.js`
+### 4.2 Criar Policy no bucket
+
+Após criar o bucket, vá em **Storage → Policies** e crie uma nova policy:
+
+1. Clique em **New policy** no bucket `arquivos`
+2. Escolha **For full customization**
+3. Preencha:
+   - **Policy name:** `allow all`
+   - Marque todas as operações: **SELECT, INSERT, UPDATE, DELETE**
+   - **USING expression:** `true`
+   - **WITH CHECK expression:** `true`
+4. Clique em **Save**
+
+> ⚠️ Sem essa policy, o upload retorna erro `new row violates row-level security policy` mesmo com o bucket público.
+
+### 4.3 Criar `src/lib/services/supabase.js`
 
 ```js
 import { createClient } from '@supabase/supabase-js';
@@ -390,13 +480,16 @@ const supabase = createClient(
 export default supabase;
 ```
 
-### 4.3 Pegar credenciais do Supabase
+### 4.4 Pegar credenciais do Supabase
 
 1. Na **Project Overview (home)** do projeto, copie a `SUPABASE_URL` com `Project URL`
 2. Em **Project Settings → Configuration → API Keys**:
-   - Em **Legacy anon, service_role API keys**, copie a `service_role secret`
+   - Em **Legacy anon, service_role API keys**, copie a `service_role secret` (clique em **Reveal**)
 
-### 4.4 Adicionar no `.env`
+> ⚠️ Não confunda com a chave `anon` — você precisa da `service_role`. A diferença: no JWT da `anon` aparece `"role":"anon"`, na `service_role` aparece `"role":"service_role"`.
+
+### 4.5 Adicionar no `.env`
+
 ```env
 # Supabase Storage
 SUPABASE_URL="https://xxxx.supabase.co"
@@ -405,7 +498,7 @@ SUPABASE_SERVICE_ROLE_KEY="eyJ..."
 
 > ⚠️ Nunca suba o `.env` para o GitHub. Use `service_role` apenas no backend — ela tem permissão total.
 
-### 4.5 Criar `src/lib/helpers/arquivoHelper.js`
+### 4.6 Criar `src/lib/helpers/arquivoHelper.js`
 
 ```js
 import sharp from 'sharp';
@@ -443,9 +536,10 @@ export const deletar = async (url) => {
     if (error) throw new Error(error.message);
 };
 ```
+
 > O Sharp converte jpeg, png, webp e gif para `.webp`, padronizando o formato e reduzindo o tamanho.
 
-### 4.6 Criar `src/controllers/arquivoController.js`
+### 4.7 Criar `src/controllers/arquivoController.js`
 
 ```js
 import ExemploModel from '../models/ExemploModel.js';
@@ -469,6 +563,7 @@ const uploadArquivo = (tipo) => async (req, res) => {
 
         return res.status(200).json({ message: `${tipo} enviado com sucesso!`, url: data[tipo] });
     } catch (error) {
+        console.error(`Erro ao fazer upload do ${tipo}:`, error);
         return res.status(500).json({ error: `Erro ao fazer upload do ${tipo}.` });
     }
 };
@@ -484,6 +579,7 @@ const buscarArquivo = (tipo) => async (req, res) => {
 
         return res.status(200).json({ url: exemplo[tipo] });
     } catch (error) {
+        console.error(`Erro ao buscar ${tipo}:`, error);
         return res.status(500).json({ error: `Erro ao buscar ${tipo}.` });
     }
 };
@@ -503,6 +599,7 @@ const deletarArquivo = (tipo) => async (req, res) => {
 
         return res.status(200).json({ message: `${tipo} removido com sucesso!` });
     } catch (error) {
+        console.error(`Erro ao remover ${tipo}:`, error);
         return res.status(500).json({ error: `Erro ao remover ${tipo}.` });
     }
 };
@@ -516,7 +613,7 @@ export const buscarDocumento = buscarArquivo('documento');
 export const deletarDocumento = deletarArquivo('documento');
 ```
 
-### 4.7 Criar `src/routes/arquivoRoute.js`
+### 4.8 Criar `src/routes/arquivoRoute.js`
 
 ```js
 import express from 'express';
@@ -536,48 +633,58 @@ router.delete('/:id/documento', controller.deletarDocumento);
 export default router;
 ```
 
-### 4.8 Registrar em src/server.js
+### 4.9 Registrar em src/server.js
 
 ```js
 import arquivoRoutes from './routes/arquivoRoute.js';
 
 app.use('/api/exemplos', apiKey, arquivoRoutes);
 ```
-### 4.9 Testar no Postman
+
+### 4.10 Testar no Postman
 
 **Upload de foto:**
 ```
 POST http://localhost:3000/api/exemplos/1/foto
+Header: X-API-Key: exemplo-backend-2026
 Body → form-data
-  key:  foto  |  type: File  |  value: [selecione uma imagem]
+  key: foto  |  type: File  |  value: [selecione uma imagem]
 ```
+
+> ⚠️ No campo `key`, clique no dropdown ao lado e troque de **Text** para **File** antes de selecionar o arquivo.
 
 **Buscar foto:**
 ```
 GET http://localhost:3000/api/exemplos/1/foto
+Header: X-API-Key: exemplo-backend-2026
 ```
 
 **Deletar foto:**
 ```
 DELETE http://localhost:3000/api/exemplos/1/foto
+Header: X-API-Key: exemplo-backend-2026
 ```
 
 **Upload de documento:**
 ```
 POST http://localhost:3000/api/exemplos/1/documento
+Header: X-API-Key: exemplo-backend-2026
 Body → form-data
-  key:  documento  |  type: File  |  value: [selecione um PDF, Word ou Excel]
+  key: documento  |  type: File  |  value: [selecione um PDF, Word ou Excel]
 ```
 
 **Buscar documento:**
 ```
 GET http://localhost:3000/api/exemplos/1/documento
+Header: X-API-Key: exemplo-backend-2026
 ```
 
 **Deletar documento:**
 ```
 DELETE http://localhost:3000/api/exemplos/1/documento
+Header: X-API-Key: exemplo-backend-2026
 ```
+
 > Confirme no Supabase: **Storage → arquivos → pasta `1/`** que os arquivos aparecem após o upload e somem após o delete.
 
 > ✅ Storage funcionando? Avance para a Etapa 5 — Deploy no Render.
@@ -588,7 +695,7 @@ DELETE http://localhost:3000/api/exemplos/1/documento
 
 ### 5.1 Criar conta e conectar GitHub no Render
 
-1. Log associando sua conta **GitHub** e autorize o acesso
+1. Acesse [render.com](https://render.com) e crie uma conta associando sua conta **GitHub** e autorizando o acesso.
 
 ### 5.2 Criar o Web Service
 
@@ -598,7 +705,7 @@ DELETE http://localhost:3000/api/exemplos/1/documento
    - **Name:** `Backend-Supabase-Render`
    - **Language:** `Node`
    - **Branch:** `main`
-   - **Region:** `Oregon (US West) - melhor latencia para o Brasil`
+   - **Region:** `Oregon (US West) - melhor latência para o Brasil`
    - **Root Directory:** deixe em branco (a menos que package.json esteja em uma subpasta)
    - **Build Command:** `npm install && npx prisma generate`
    - **Start Command:** `node src/server.js`
@@ -619,33 +726,58 @@ Em **Environment → Add Environment Variable**, adicione todas as variáveis do
 
 ### 5.4 Fazer o deploy
 
-Clique em **Deploy Web Service** e acompanhe os logs:
+Clique em **Deploy Web Service** e acompanhe os logs. O deploy foi bem sucedido quando aparecer:
 
 ```
-==> Cloning from https://github.com/mapcarboni/Backend-Supabase-Render
-==> Checking out commit 145debbcd4be6174c218e5ecc7b3a9b7dc2fa758 in branch main
-==> Using Node.js version 22.22.0 (default)
-==> Docs on specifying a Node.js version: https://render.com/docs/node-version
-==> Running build command 'npm install && npx prisma generate'...
-
-    ...
-
-==> Uploading build...
-==> Uploaded in 5.0s. Compression took 2.1s
 ==> Build successful 🎉
-==> Deploying...
-==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
-==> Running 'node src/server.js'
 🚀 Servidor rodando em http://localhost:3000
 ==> Your service is live 🎉
 ==> Available at your primary URL https://[nome-do-seu-projeto].onrender.com
 ```
 
-### 5.5 Testar no Postman com a URL do Render
+> ⚠️ No plano free o Render hiberna após 15 minutos de inatividade. A primeira requisição pode levar ~30 segundos.
+
+### 5.5 Problemas comuns no Render
+
+**❌ Erro: `Cannot find module`**
+
+O `node_modules` não foi instalado. Verifique se o **Build Command** está como:
+```
+npm install && npx prisma generate
+```
+
+**❌ Erro: `prisma generate` falhou**
+
+O Prisma Client não foi gerado. Confirme que o Build Command inclui `npx prisma generate`.
+
+**❌ Erro: `supabaseUrl is required`**
+
+As variáveis de ambiente não foram configuradas. Verifique em **Environment** se `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` estão preenchidas corretamente (sem aspas extras).
+
+**❌ Erro de conexão com o banco**
+
+Verifique se `DATABASE_URL` no Render está usando a URL do **pooler** (porta 6543), não a direta. A URL direta (porta 5432) é só para migrations locais via `DIRECT_URL`.
+
+**❌ API retorna 401 em todas as rotas**
+
+A variável `API_KEY` não está configurada no Render. Adicione `API_KEY` com o valor `exemplo-backend-2026` nas variáveis de ambiente.
+
+**❌ Deploy não atualiza após push**
+
+Por padrão o Render faz deploy automático a cada push na branch `main`. Se não estiver acontecendo, vá em **Settings → Auto-Deploy** e confirme que está ativado.
+
+### 5.6 Testar no Postman com a URL do Render
 
 Anote a URL fornecida pelo Render e configure uma variável de ambiente no Postman:
-- **Variable:** `base_url`
-- **Value:** `https://[nome-do-seu-projeto].onrender.com`
+
+1. No Postman, clique em **Environments** (ícone de olho no canto superior direito)
+2. Clique em **Add**
+3. Adicione:
+   - **Variable:** `base_url`
+   - **Initial Value:** `https://[nome-do-seu-projeto].onrender.com`
+4. Clique em **Save** e selecione o environment criado
+
+Agora use `{{base_url}}` nas requisições:
 
 **Status da API:**
 ```
@@ -731,6 +863,80 @@ Header: X-API-Key: exemplo-backend-2026
 DELETE {{base_url}}/api/exemplos/1/documento
 Header: X-API-Key: exemplo-backend-2026
 ```
+
+> ✅ API respondendo pela URL do Render? Deploy concluído!
+
+---
+
+## Etapa 6 — Documentação no Postman (link público)
+
+O Postman permite gerar uma documentação pública com um link para compartilhar a API.
+
+### 6.1 Organizar as requisições em uma Collection
+
+1. No Postman, clique em **Collections** no menu lateral
+2. Clique em **+** para criar uma nova collection
+3. Nomeie como `API Exemplo`
+4. Arraste todas as suas requisições para dentro da collection
+5. Organize em pastas se quiser (ex: `Exemplos`, `Fotos`, `Documentos`)
+
+### 6.2 Adicionar descrições
+
+1. Clique na collection e depois em **Edit**
+2. Adicione uma descrição geral da API
+3. Para cada requisição, clique nela e adicione uma descrição no campo **Description**
+
+### 6.3 Publicar a documentação
+
+1. Clique nos **três pontos (...)** ao lado da collection
+2. Clique em **View Documentation**
+3. No canto superior direito, clique em **Publish**
+4. Configure:
+   - **Environment:** selecione o environment com `base_url` apontando para o Render
+   - Deixe as demais opções padrão
+5. Clique em **Publish**
+6. Copie o link gerado — ele é público e pode ser compartilhado com qualquer pessoa
+
+> O link fica no formato: `https://documenter.getpostman.com/view/XXXXXXX/XXXXXXX`
+
+---
+
+## Casos de Erros Comuns
+
+### Após alterar schema.prisma
+
+```bash
+npx prisma migrate dev --name nome_da_alteracao
+npx prisma generate
+```
+
+### Banco inconsistente (⚠️ APAGA TUDO)
+
+```bash
+npx prisma migrate reset
+```
+
+### Apenas popular dados
+
+```bash
+npx prisma db seed
+```
+
+### package.json — script dev no Mac/Linux
+
+O comando `cls` não existe no Mac/Linux. Use:
+
+```json
+"dev": "nodemon src/server.js"
+```
+
+### Dicas
+
+| Comando | Apaga dados? | Cria migrations? | Uso |
+| --- | --- | --- | --- |
+| `migrate dev` | ❌ Não | ✅ Sim | Alterar schema |
+| `db seed` | ❌ Não | ❌ Não | Popular dados |
+| `migrate reset` | ✅ SIM | ❌ Não | DEV only |
 
 > ⚠️ No plano free o Render hiberna após 15 minutos de inatividade. A primeira requisição pode levar ~30 segundos.
 
